@@ -1,0 +1,690 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// USER & AUTHENTICATION
+// ============================================
+
+enum UserRole {
+  ADMIN
+  SALES
+  TEAM_MEMBER
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+model User {
+  id            String     @id @default(uuid())
+  email         String     @unique
+  passwordHash  String
+  firstName     String?
+  lastName      String?
+  role          UserRole   @default(TEAM_MEMBER)
+  status        UserStatus @default(ACTIVE)
+  
+  // Profile
+  avatar        String?
+  phone         String?
+  timezone      String     @default("UTC")
+  
+  // Preferences
+  notificationPreferences Json? // Store notification settings
+  
+  // Timestamps
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  lastLoginAt   DateTime?
+  
+  // Relations
+  ownedLeads    Lead[]     @relation("LeadOwner")
+  assignedLeads Lead[]     @relation("LeadAssignee")
+  appointments Appointment[]
+  meetingTypes  MeetingType[]
+  sentMessages  Message[]  @relation("MessageSender")
+  
+  // OAuth
+  googleCalendarConnected Boolean @default(false)
+  googleCalendarToken     Json?
+  googleCalendarRefreshToken String?
+  outlookCalendarConnected Boolean @default(false)
+  outlookCalendarToken     Json?
+  
+  @@map("users")
+}
+
+// ============================================
+// ORGANIZATION & TEAM
+// ============================================
+
+model Organization {
+  id          String   @id @default(uuid())
+  name        String
+  slug        String   @unique
+  domain      String?
+  logo        String?
+  settings    Json?    // Organization-wide settings
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relations
+  users       User[]
+  leads       Lead[]
+  meetingTypes MeetingType[]
+  forms       BookingForm[]
+  
+  @@map("organizations")
+}
+
+// ============================================
+// LEAD MANAGEMENT
+// ============================================
+
+enum LeadStatus {
+  NEW
+  QUALIFIED
+  DISQUALIFIED
+  CONTACTED
+  BOOKED
+  NO_SHOW
+  CLOSED_WON
+  CLOSED_LOST
+}
+
+enum LeadSource {
+  BOOKING_FORM
+  IMPORTED
+  API
+  MANUAL
+}
+
+model Lead {
+  id              String      @id @default(uuid())
+  
+  // Basic info
+  firstName       String?
+  lastName        String?
+  email           String?
+  phone           String?
+  company         String?
+  jobTitle        String?
+  
+  // Custom fields (stored as JSON for flexibility)
+  customFields    Json?
+  
+  // Qualification
+  status          LeadStatus  @default(NEW)
+  qualificationScore Int?     // 0-100 score
+  disqualificationReason String?
+  
+  // Source
+  source          LeadSource  @default(BOOKING_FORM)
+  formId          String?     // Reference to booking form
+  
+  // Routing
+  ownerId         String?     // User who owns this lead
+  owner           User?       @relation("LeadOwner", fields: [ownerId], references: [id])
+  assigneeId      String?     // User assigned to this lead
+  assignee        User?       @relation("LeadAssignee", fields: [assigneeId], references: [id])
+  
+  // Appointment
+  appointmentId   String?
+  appointment     Appointment? @relation(fields: [appointmentId], references: [id])
+  
+  // Organization
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id])
+  
+  // Timestamps
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  qualifiedAt     DateTime?
+  bookedAt        DateTime?
+  closedAt        DateTime?
+  
+  // Tracking
+  ipAddress       String?
+  userAgent       String?
+  referrer        String?
+  utmSource       String?
+  utmMedium       String?
+  utmCampaign     String?
+  
+  // Notes and activity
+  notes           LeadNote[]
+  activities      LeadActivity[]
+  messages        Message[]
+  
+  @@map("leads")
+  @@index([organizationId])
+  @@index([status])
+  @@index([ownerId])
+  @@index([assigneeId])
+  @@index([email])
+}
+
+model LeadNote {
+  id          String   @id @default(uuid())
+  content     String
+  createdById String
+  createdBy   User     @relation(fields: [createdById], references: [id])
+  leadId      String
+  lead        Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("lead_notes")
+}
+
+enum LeadActivityType {
+  CREATED
+  QUALIFIED
+  DISQUALIFIED
+  ASSIGNED
+  CONTACTED
+  BOOKED
+  NO_SHOW
+  CLOSED
+  NOTE_ADDED
+  EMAIL_SENT
+  SMS_SENT
+}
+
+model LeadActivity {
+  id          String           @id @default(uuid())
+  type        LeadActivityType
+  description String?
+  metadata    Json?
+  createdById String?
+  createdBy   User?            @relation(fields: [createdById], references: [id])
+  leadId      String
+  lead        Lead             @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  
+  createdAt   DateTime         @default(now())
+  
+  @@map("lead_activities")
+}
+
+// ============================================
+// QUALIFICATION RULES
+// ============================================
+
+model QualificationRule {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  
+  // Rule configuration
+  field       String   // Which field to check (companySize, budget, country, jobRole, customField)
+  operator    String   // ==, !=, >, <, >=, <=, in, notIn, contains
+  value       Json     // The value(s) to compare against
+  
+  // Scoring
+  score       Int      // Points to add if rule matches
+  isRequired  Boolean  @default(false) // If true, lead is disqualified if rule doesn't match
+  
+  // Organization
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("qualification_rules")
+}
+
+// ============================================
+// BOOKING FORMS
+// ============================================
+
+model BookingForm {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  
+  // Form configuration
+  fields      Json     // Array of form fields configuration
+  settings    Json?    // Form settings (colors, branding, etc.)
+  
+  // Organization
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  
+  // Tracking
+  isActive     Boolean  @default(true)
+  visitCount   Int      @default(0)
+  submissionCount Int   @default(0)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relations
+  leads       Lead[]
+  
+  @@map("booking_forms")
+}
+
+// ============================================
+// APPOINTMENT SCHEDULING
+// ============================================
+
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+  RESCHEDULED
+}
+
+enum MeetingTypeDuration {
+  MINUTES_15
+  MINUTES_30
+  MINUTES_45
+  MINUTES_60
+  MINUTES_90
+  MINUTES_120
+  CUSTOM
+}
+
+model MeetingType {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  
+  // Duration
+  duration    MeetingTypeDuration @default(MINUTES_30)
+  customDuration Int? // In minutes, used when duration is CUSTOM
+  
+  // Calendar settings
+  calendarId  String?  // Google Calendar ID or Outlook Calendar ID
+  
+  // Availability
+  availability Json?   // Available days and times
+  bufferTime  Int      @default(0) // Buffer time between meetings in minutes
+  
+  // Organization
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  
+  // Owner (who created this meeting type)
+  ownerId     String
+  owner       User     @relation(fields: [ownerId], references: [id])
+  
+  // Team assignment
+  assignedToId String?
+  assignedTo   User?    @relation(fields: [assignedToId], references: [id])
+  
+  // Settings
+  isActive   Boolean  @default(true)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relations
+  appointments Appointment[]
+  
+  @@map("meeting_types")
+}
+
+model Appointment {
+  id          String           @id @default(uuid())
+  
+  // Meeting details
+  title       String?
+  description String?
+  startTime   DateTime
+  endTime     DateTime
+  timezone    String
+  
+  // Status
+  status      AppointmentStatus @default(SCHEDULED)
+  
+  // Meeting type
+  meetingTypeId String
+  meetingType   MeetingType     @relation(fields: [meetingTypeId], references: [id])
+  
+  // Lead
+  leadId       String
+  lead         Lead             @relation(fields: [leadId], references: [id])
+  
+  // Calendar
+  calendarEventId String? // ID from Google Calendar or Outlook
+  calendarType   String?  // 'google' or 'outlook'
+  
+  // Location
+  location     String?  // Physical or virtual location
+  isVirtual    Boolean  @default(true)
+  meetingLink   String?  // Zoom, Google Meet, etc.
+  
+  // Reminders
+  reminders    AppointmentReminder[]
+  
+  // Organization
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  
+  // Assignee
+  assigneeId   String?
+  assignee     User?            @relation(fields: [assigneeId], references: [id])
+  
+  // Tracking
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  confirmedAt  DateTime?
+  cancelledAt  DateTime?
+  completedAt  DateTime?
+  
+  // Notes
+  notes        String?
+  
+  @@map("appointments")
+  @@index([organizationId])
+  @@index([leadId])
+  @@index([status])
+  @@index([startTime])
+}
+
+model AppointmentReminder {
+  id          String     @id @default(uuid())
+  type        String     // 'email' or 'sms'
+  sentAt      DateTime?
+  scheduledAt DateTime
+  status      String     @default("pending") // pending, sent, failed
+  
+  appointmentId String
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  
+  createdAt   DateTime   @default(now())
+  
+  @@map("appointment_reminders")
+}
+
+// ============================================
+// LEAD ROUTING
+// ============================================
+
+enum RoutingRuleType {
+  ROUND_ROBIN
+  RULE_BASED
+  MANUAL
+}
+
+model RoutingRule {
+  id          String        @id @default(uuid())
+  name        String
+  type        RoutingRuleType @default(ROUND_ROBIN)
+  
+  // Rule-based configuration
+  conditions  Json?        // Conditions for rule-based routing
+  targetUserId String?     // User to assign to (for rule-based)
+  
+  // Round-robin configuration
+  teamIds     String[]     // Team members to rotate between
+  currentIndex Int        @default(0) // Current position in rotation
+  
+  // Organization
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  
+  isActive     Boolean      @default(true)
+  priority     Int          @default(0) // Higher priority rules are checked first
+  
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  
+  @@map("routing_rules")
+}
+
+// ============================================
+// COMMUNICATIONS
+// ============================================
+
+enum MessageType {
+  EMAIL
+  SMS
+}
+
+enum MessageStatus {
+  PENDING
+  SENT
+  FAILED
+  BOUNCED
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+model Message {
+  id          String        @id @default(uuid())
+  type        MessageType
+  direction   MessageDirection @default(OUTBOUND)
+  
+  // Content
+  subject     String?
+  body        String
+  
+  // Recipients
+  to          Json          // Array of recipient addresses/numbers
+  from        String?
+  
+  // Status
+  status      MessageStatus @default(PENDING)
+  errorMessage String?
+  
+  // Tracking
+  sentAt      DateTime?
+  deliveredAt DateTime?
+  openedAt    DateTime?
+  clickedAt   DateTime?
+  
+  // Relations
+  leadId       String?
+  lead         Lead?         @relation(fields: [leadId], references: [id])
+  appointmentId String?
+  appointment  Appointment?  @relation(fields: [appointmentId], references: [id])
+  senderId     String?
+  sender       User?         @relation("MessageSender", fields: [senderId], references: [id])
+  
+  // Organization
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  
+  // Metadata
+  templateId   String?
+  metadata    Json?
+  
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  
+  @@map("messages")
+  @@index([organizationId])
+  @@index([leadId])
+  @@index([status])
+}
+
+// ============================================
+// EMAIL TEMPLATES
+// ============================================
+
+enum TemplateType {
+  BOOKING_CONFIRMATION
+  APPOINTMENT_REMINDER
+  FOLLOW_UP
+  CUSTOM
+}
+
+model EmailTemplate {
+  id          String       @id @default(uuid())
+  name        String
+  type        TemplateType @default(CUSTOM)
+  
+  // Content
+  subject     String
+  body        String       // HTML body
+  plainText   String?      // Plain text version
+  
+  // Variables available in template
+  variables   String[]     // Array of variable names
+  
+  // Organization
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  
+  isActive     Boolean      @default(true)
+  
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  
+  @@map("email_templates")
+}
+
+// ============================================
+// AUTOMATION
+// ============================================
+
+enum AutomationTrigger {
+  LEAD_CREATED
+  LEAD_QUALIFIED
+  LEAD_DISQUALIFIED
+  APPOINTMENT_BOOKED
+  APPOINTMENT_CONFIRMED
+  APPOINTMENT_CANCELLED
+  APPOINTMENT_COMPLETED
+  NO_SHOW
+  FOLLOW_UP_DUE
+}
+
+enum AutomationAction {
+  SEND_EMAIL
+  SEND_SMS
+  ASSIGN_LEAD
+  UPDATE_LEAD_STATUS
+  CREATE_TASK
+  ADD_NOTE
+}
+
+model Automation {
+  id          String           @id @default(uuid())
+  name        String
+  description String?
+  
+  // Trigger
+  trigger     AutomationTrigger
+  triggerConfig Json? // Additional configuration for trigger
+  
+  // Conditions
+  conditions  Json?    // Conditions that must be met
+  
+  // Actions
+  actions     Json     // Array of actions to perform
+  
+  // Timing
+  delayMinutes Int?    // Delay before executing (for follow-ups)
+  
+  // Organization
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  
+  isActive     Boolean  @default(true)
+  
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  @@map("automations")
+}
+
+// ============================================
+// ANALYTICS
+// ============================================
+
+model AnalyticsEvent {
+  id          String   @id @default(uuid())
+  eventType   String   // lead_created, lead_qualified, appointment_booked, etc.
+  metadata    Json?
+  
+  // Relations
+  userId       String?
+  leadId       String?
+  appointmentId String?
+  organizationId String
+  
+  createdAt   DateTime @default(now())
+  
+  @@map("analytics_events")
+  @@index([organizationId])
+  @@index([eventType])
+  @@index([createdAt])
+}
+
+// ============================================
+// INTEGRATIONS
+// ============================================
+
+model Integration {
+  id          String   @id @default(uuid())
+  type        String   // google_calendar, outlook_calendar, sendgrid, twilio, etc.
+  name        String
+  
+  // Configuration
+  config      Json     // API keys, tokens, etc.
+  
+  // Status
+  isConnected Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  lastSyncAt  DateTime?
+  
+  // Organization
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("integrations")
+  @@index([organizationId])
+  @@index([type])
+}
+
+// ============================================
+// WEBHOOKS
+// ============================================
+
+model Webhook {
+  id          String   @id @default(uuid())
+  name        String
+  url         String
+  
+  // Events to listen for
+  events      String[] // Array of event types
+  
+  // Secret for verification
+  secret      String?
+  
+  // Organization
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  
+  isActive    Boolean  @default(true)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("webhooks")
+}
