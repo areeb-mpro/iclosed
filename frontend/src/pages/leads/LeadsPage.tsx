@@ -649,26 +649,4 @@ export default function LeadsPage() {
   );
 }
 
-// Helper functions
-const formatDate = (dateString: string | null) => {
-  if (!dateString) return 'N/A';
-  return new Date(dateString).toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  });
-};
 
-const formatName = (firstName: string | null, lastName: string | null) => {
-  return [firstName, lastName].filter(Boolean).join(' ') || 'Unknown';
-};
-
-const formatPhone = (phone: string | null) => {
-  if (!phone) return null;
-  // Simple phone formatting
-  const cleaned = phone.replace(/\D/g, '');
-  if (cleaned.length === 10) {
-    return `(${cleaned.substring(0, 3)}) ${cleaned.substring(3, 6)}-${cleaned.substring(6)}`;
-  }
-  return phone;
-};
