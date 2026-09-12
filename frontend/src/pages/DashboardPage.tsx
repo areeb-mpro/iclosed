@@ -17,7 +17,6 @@ import {
 } from 'lucide-react';
 import { LEAD_STATUS_COLORS } from '../utils/constants';
 import LoadingSpinner from '../components/LoadingSpinner';
-import StatCard from '../components/StatCard';
 import RecentActivity from '../components/RecentActivity';
 
 // Chart components
@@ -322,59 +321,6 @@ export default function DashboardPage() {
           type="appointment"
           viewAllLink="/appointments"
         />
-      </div>
-    </div>
-  );
-}
-
-// StatCard component
-function StatCard({ 
-  title, 
-  value, 
-  icon: Icon, 
-  color,
-  change,
-  changeType,
-  subtitle
-}: {
-  title: string;
-  value: number | string;
-  icon: React.ElementType;
-  color: string;
-  change: string;
-  changeType: 'positive' | 'negative';
-  subtitle: string;
-}) {
-  const colorClasses = {
-    blue: { bg: 'bg-blue-500', text: 'text-blue-600', dot: 'bg-blue-500' },
-    green: { bg: 'bg-green-500', text: 'text-green-600', dot: 'bg-green-500' },
-    red: { bg: 'bg-red-500', text: 'text-red-600', dot: 'bg-red-500' },
-    purple: { bg: 'bg-purple-500', text: 'text-purple-600', dot: 'bg-purple-500' },
-    cyan: { bg: 'bg-cyan-500', text: 'text-cyan-600', dot: 'bg-cyan-500' },
-  };
-
-  const classes = colorClasses[color as keyof typeof colorClasses] || colorClasses.blue;
-
-  return (
-    <div className="card">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm text-gray-500">{subtitle}</p>
-          <p className="text-3xl font-bold text-gray-900 mt-1">{value}</p>
-          <div className="flex items-center mt-2">
-            {changeType === 'positive' ? (
-              <ArrowUp className="h-4 w-4 text-green-500" />
-            ) : (
-              <ArrowDown className="h-4 w-4 text-red-500" />
-            )}
-            <span className={`text-sm font-medium ${changeType === 'positive' ? 'text-green-600' : 'text-red-600'} ml-1`}>
-              {change}
-            </span>
-          </div>
-        </div>
-        <div className={`p-3 rounded-xl ${classes.bg}`}>
-          <Icon className="h-6 w-6 text-white" />
-        </div>
       </div>
     </div>
   );
